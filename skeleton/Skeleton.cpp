@@ -61,6 +61,8 @@ namespace {
 
 class TSOConsistencyEnforcer : public PassInfoMixin<TSOConsistencyEnforcer> {
 public:
+  static constexpr int LookaheadLimit = 5; // Check up to 5 instructions ahead
+
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool modified = false;
 
@@ -70,10 +72,10 @@ public:
       dbgs() << "Function: " << F.getName() << "\n";
       for (BasicBlock &BB : F) {
         for (Instruction &I : BB) {
-          if (isa<LoadInst>(&I) || isa<StoreInst>(&I)) {
-            Instruction *NextInst = I.getNextNode();
-            if (NextInst && (isa<LoadInst>(NextInst) || isa<StoreInst>(NextInst))) {
-              if (needsFence(&I, NextInst)) {
+          Instruction* limit = getNextInstruction(&I, LookaheadLimit, &BB);
+          for (Instruction* NextInst = I.getNextNode(); NextInst != nullptr && NextInst != limit; NextInst = NextInst->getNextNode()) {
+            if (isa<LoadInst>(NextInst) || isa<StoreInst>(NextInst)) {
+               if (needsFence(&I, NextInst)) {
                 dbgs() << "Inserting fence between instructions: \n\t"
                        << I << "\n\t" << *NextInst << "\n";
                 insertMemoryFence(NextInst, modified);
@@ -95,8 +97,15 @@ public:
 
     return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
-  
 private:
+
+  Instruction* getNextInstruction(Instruction* start, int limit, BasicBlock* BB) {
+                Instruction* current = start;
+                for (int i = 0; i < limit && current != nullptr && current->getNextNode() != nullptr; i++) {
+                    current = current->getNextNode();
+                }
+                return current;
+  }
   bool needsFence(Instruction *First, Instruction *Second) {
     // TSO allows WR without fences; fences are needed for RW, WW, and RR pairs
     bool isFirstLoad = isa<LoadInst>(First);
