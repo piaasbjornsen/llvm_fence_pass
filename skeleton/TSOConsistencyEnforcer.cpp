@@ -22,7 +22,9 @@ public:
       dbgs() << "Function: " << F.getName() << "\n";
       for (BasicBlock &BB : F) {
         for (Instruction &I : BB) {
+
           if (isa<LoadInst>(&I) || isa<StoreInst>(&I)) {
+
             Instruction *NextInst = I.getNextNode();
             if (NextInst && (isa<LoadInst>(NextInst) || isa<StoreInst>(NextInst))) {
               if (needsFence(&I, NextInst)) {
@@ -57,15 +59,15 @@ private:
 
     if (isFirstLoad && isSecondStore) {
       dbgs() << "Detected RW pair.\n";
-    } else if (!isFirstLoad && isSecondLoad) {
-      dbgs() << "Detected WW pair.\n";
     } else if (!isFirstLoad && isSecondStore) {
+      dbgs() << "Detected WW pair.\n";
+    } else if (isFirstLoad && isSecondLoad) {
       dbgs() << "Detected RR pair.\n";
     } else {
       dbgs() << "Detected WR pair (allowed under TSO).\n";
     }
 
-    return (isFirstLoad && isSecondStore) || (!isFirstLoad && (isSecondLoad || isSecondStore));
+    return (isFirstLoad && isSecondStore) || (!isFirstLoad && isSecondStore) || (isFirstLoad && isSecondLoad);
   }
 
   void insertMemoryFence(Instruction *Inst, bool &modified) {
