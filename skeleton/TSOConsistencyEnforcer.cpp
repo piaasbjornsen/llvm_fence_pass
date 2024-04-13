@@ -28,46 +28,59 @@ namespace {
 
                 //define alias analysis for current function
                 auto& AA = FAM.getResult<AAManager>(F);
+
+                //iterate over all blocks, then instructions in the function
                 for (BasicBlock& BB : F) {
                     for (Instruction& I : BB) {
+
                         //skip if the instruction is not a load or store
                         Instruction* NextInst = I.getNextNode();
                         if (NextInst && (isa<LoadInst>(&I) || isa<StoreInst>(&I)) &&
                             (isa<LoadInst>(NextInst) || isa<StoreInst>(NextInst))) {
+
                             //check if a fence is needed between the two instructions
-                            if (needsFence(&I, NextInst, AA)) {
-                                dbgs() << "Inserting fence between instructions: \n\t"
-                                    << I << "\n\t" << *NextInst << "\n";
-                                insertMemoryFence(NextInst, modified);
-                            }
-                            else {
-                                dbgs() << "No fence needed between instructions: \n\t"
-                                    << I << "\n\t" << *NextInst << "\n";
-                            }
+                            checkForReordering(&I, F, AA, modified);
                         }
                     }
                 }
-            }
 
-            if (modified) {
-                dbgs() << "Modifications made to module: Fences inserted.\n";
-            }
-            else {
-                dbgs() << "No modifications made to module: No fences inserted.\n";
-            }
+                if (modified) {
+                    dbgs() << "Modifications made to module: Fences inserted.\n";
+                }
+                else {
+                    dbgs() << "No modifications made to module: No fences inserted.\n";
+                }
 
-            return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
+                return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
+            }
         }
 
     private:
-        bool needsFence(Instruction* First, Instruction* Second, AAResults& AA) {
-            //Check if the two instructions alias using AA
+        void insertMemoryFence(Instruction* Inst, bool& modified) {
+            //add a fence after the instruction
+            IRBuilder<> Builder(Inst);
+            auto* Fence = Builder.CreateFence(AtomicOrdering::SequentiallyConsistent, SyncScope::System);
+            modified = true;
+
+            dbgs() << "Memory fence inserted: " << *Fence << "\n";
+        }
+
+        bool needsFence(Instruction* First, Instruction* Second, AAResults& AA, int maxDistance) {
+            int distance = 0;
+            Instruction* nextInst = First->getNextNode();
+            //check if the two instructions are within a certain distance
+            while (nextInst != nullptr && nextInst != Second) {
+                nextInst = nextInst->getNextNode();
+                distance++;
+                if (distance > maxDistance) return false;
+            }
+            //check if the two instructions alias using AA
             if (AA.alias(MemoryLocation::get(First), MemoryLocation::get(Second)) != AliasResult::NoAlias) {
                 bool isFirstLoad = isa<LoadInst>(First);
                 bool isSecondLoad = isa<LoadInst>(Second);
                 bool isFirstStore = isa<StoreInst>(First);
                 bool isSecondStore = isa<StoreInst>(Second);
-                //Check for potential non-WR reordering
+                //check for potential non-WR reordering
                 if ((isFirstLoad && isSecondStore) || // RW
                     (isFirstStore && isSecondStore) || // WW
                     (isFirstLoad && isSecondLoad)) {   // RR
@@ -77,13 +90,25 @@ namespace {
             return false;
         }
 
-        void insertMemoryFence(Instruction* Inst, bool& modified) {
-            //Add a fence after the instruction
-            IRBuilder<> Builder(Inst);
-            auto* Fence = Builder.CreateFence(AtomicOrdering::SequentiallyConsistent, SyncScope::System);
-            modified = true;
-
-            dbgs() << "Memory fence inserted: " << *Fence << "\n";
+        void checkForReordering(Instruction* Inst, Function& F, AAResults& AA, bool modified) {
+            //find next instruction in the same basic block
+            Instruction* Next = Inst->getNextNode();
+            while (Next) {
+                if (isa<LoadInst>(Next) || isa<StoreInst>(Next)) {
+                    //check if these two instructions might need a fence, specify max distance as int
+                    if (needsFence(Inst, Next, AA, 10)) {
+                        dbgs() << "Potential reordering found between:\n\t"
+                            << *Inst << "\n\t" << *Next << "\n";
+                        //insert a fence after the first instruction
+                        insertMemoryFence(Next, modified);
+                    }
+                    else {
+						dbgs() << "No reordering found between:\n\t"
+							<< *Inst << "\n\t" << *Next << "\n";
+                    }
+                }
+                Next = Next->getNextNode();
+            }
         }
     };
 	extern "C" LLVM_ATTRIBUTE_WEAK::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
