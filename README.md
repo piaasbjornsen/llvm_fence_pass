@@ -21,3 +21,13 @@ Run .c:
     $ gcc example.c -o program
     $ ./program
     
+Run 
+
+    $ `brew --prefix llvm`/bin/clang -fpass-plugin=`echo build/skeleton/SkeletonPass.*` example.c
+
+    $ `brew --prefix llvm`/bin/clang -S -emit-llvm example.c -o example.ll  
+            
+    $ `brew --prefix llvm`/bin/opt -load-pass-plugin=build/skeleton/SkeletonPass.dylib -passes="enforce-tso" -S example.ll -o example.opt.ll
+
+    $ `brew --prefix llvm`/bin/opt -load-pass-plugin=build/skeleton/SkeletonPass.dylib -S example.ll -o example.opt.ll
+
