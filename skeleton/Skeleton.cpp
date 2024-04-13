@@ -112,18 +112,47 @@ private:
     bool isSecondLoad = isa<LoadInst>(Second);
     bool isSecondStore = isa<StoreInst>(Second);
 
-    if (isFirstLoad && isSecondStore) {
-      dbgs() << "Detected RW pair.\n";
-    } else if (!isFirstLoad && isSecondStore) {
-      dbgs() << "Detected WW pair.\n";
-    } else if (isFirstLoad && isSecondLoad) {
-      dbgs() << "Detected RR pair.\n";
-    } else {
-      dbgs() << "Detected WR pair (allowed under TSO).\n";
-    }
+    // Check if both instructions access memory
+    if ((isFirstLoad || isSecondLoad) && isSecondStore) {
+        Value *FirstMemOperand = nullptr;
+        Value *SecondMemOperand = nullptr;
 
-    return (isFirstLoad && isSecondStore) || (!isFirstLoad && isSecondStore) || (isFirstLoad && isSecondLoad);
-  }
+        if (isFirstLoad) {
+            FirstMemOperand = cast<LoadInst>(First)->getPointerOperand();
+        } else {
+            FirstMemOperand = cast<StoreInst>(First)->getPointerOperand();
+        }
+
+        if (isSecondLoad) {
+            SecondMemOperand = cast<LoadInst>(Second)->getPointerOperand();
+        } else {
+            SecondMemOperand = cast<StoreInst>(Second)->getPointerOperand();
+        }
+
+        // Compare memory operands to check if they access the same memory address
+        if (FirstMemOperand == SecondMemOperand) {
+            if (isFirstLoad && isSecondStore) {
+                dbgs() << "Detected RW pair accessing the same memory address.\n";
+            } else if (!isFirstLoad && isSecondStore) {
+                dbgs() << "Detected WW pair accessing the same memory address.\n";
+            } else if (isFirstLoad && isSecondLoad) {
+                dbgs() << "Detected RR pair accessing the same memory address.\n";
+            } else {
+                dbgs() << "Detected WR pair accessing the same memory address (allowed under TSO).\n";
+            }
+
+            return true;
+        } else {
+            // Instructions access different memory addresses
+            dbgs() << "Instructions access different memory addresses.\n";
+            return false;
+        }
+    } else {
+        dbgs() << "Instructions do not form a memory access pair.\n";
+        return false;
+    }
+}
+
   
 
   void insertMemoryFence(Instruction *Inst, bool &modified) {
