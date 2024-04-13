@@ -1,1 +1,6 @@
 build
+# Ignore Visual Studio Code workspace and configuration files
+.vscode/
+
+# Ignore compiled binary (executable) files
+a.out
