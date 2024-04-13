@@ -65,6 +65,9 @@ public:
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool modified = false;
+    int instructionNumber = 0;
+    int vsNumber = 0;
+
 
     for (Function &F : M) {
       if (F.isDeclaration()) continue;
@@ -72,19 +75,38 @@ public:
       dbgs() << "Function: " << F.getName() << "\n";
       for (BasicBlock &BB : F) {
         for (Instruction &I : BB) {
-          Instruction* limit = getNextInstruction(&I, LookaheadLimit, &BB);
+          ++instructionNumber; // Increment instruction number
+          // Print the instruction number (starting at 1) and indent
+          dbgs() << " \n" << "START instruction: " << instructionNumber << "    is" << I << ": \n";
+          // Check if the instruction is a load or store
+          if (!isa<LoadInst>(&I) && !isa<StoreInst>(&I)) {
+            dbgs() << "Not a memory access instruction \n";
+            dbgs() << "End instruction: " << instructionNumber << "\n";
+            continue; // Skip further processing and move to the next instruction
+            } else {
+            dbgs() << "Memory access instruction, checking for pairs... \n";
+
+            }
+        Instruction* limit = getNextInstruction(&I, LookaheadLimit, &BB);
           for (Instruction* NextInst = I.getNextNode(); NextInst != nullptr && NextInst != limit; NextInst = NextInst->getNextNode()) {
+            ++vsNumber; // Increment instruction number
+            dbgs() << "\tvs " << vsNumber << "\n";
             if (isa<LoadInst>(NextInst) || isa<StoreInst>(NextInst)) {
-               if (needsFence(&I, NextInst)) {
-                dbgs() << "Inserting fence between instructions: \n\t"
-                       << I << "\n\t" << *NextInst << "\n";
+              if (needsFence(&I, NextInst)) {
+                dbgs() << "\t Inserting fence between instructions: \n\t"
+                       << I << "\n\t   " << *NextInst << "\n";
                 insertMemoryFence(NextInst, modified);
               } else {
-                dbgs() << "No fence needed between instructions: \n\t"
-                       << I << "\n\t" << *NextInst << "\n";
+                dbgs() << "\t No fence needed between instructions: \n\t   "
+                       << I << "\n\t   " << *NextInst << "\n";
               }
+            } else {
+                 dbgs() << "\t Not a memory access instruction \n";
             }
           }
+            vsNumber = 0;
+            dbgs() << "End instruction: " << instructionNumber << "\n\n";
+
         }
       }
     }
@@ -107,51 +129,55 @@ private:
                 return current;
   }
   bool needsFence(Instruction *First, Instruction *Second) {
-    // TSO allows WR without fences; fences are needed for RW, WW, and RR pairs
-    bool isFirstLoad = isa<LoadInst>(First);
-    bool isSecondLoad = isa<LoadInst>(Second);
-    bool isSecondStore = isa<StoreInst>(Second);
+  // Identify if the instructions are load or store
+  bool isFirstLoad = isa<LoadInst>(First);
+  bool isSecondLoad = isa<LoadInst>(Second);
+  bool isSecondStore = isa<StoreInst>(Second);
 
-    // Check if both instructions access memory
-    if ((isFirstLoad || isSecondLoad) && isSecondStore) {
-        Value *FirstMemOperand = nullptr;
-        Value *SecondMemOperand = nullptr;
+  // Check if both instructions access memory
+  if (isFirstLoad || isSecondLoad || isSecondStore) {
+    Value *FirstMemOperand = nullptr;
+    Value *SecondMemOperand = nullptr;
 
-        if (isFirstLoad) {
-            FirstMemOperand = cast<LoadInst>(First)->getPointerOperand();
-        } else {
-            FirstMemOperand = cast<StoreInst>(First)->getPointerOperand();
-        }
-
-        if (isSecondLoad) {
-            SecondMemOperand = cast<LoadInst>(Second)->getPointerOperand();
-        } else {
-            SecondMemOperand = cast<StoreInst>(Second)->getPointerOperand();
-        }
-
-        // Compare memory operands to check if they access the same memory address
-        if (FirstMemOperand == SecondMemOperand) {
-            if (isFirstLoad && isSecondStore) {
-                dbgs() << "Detected RW pair accessing the same memory address.\n";
-            } else if (!isFirstLoad && isSecondStore) {
-                dbgs() << "Detected WW pair accessing the same memory address.\n";
-            } else if (isFirstLoad && isSecondLoad) {
-                dbgs() << "Detected RR pair accessing the same memory address.\n";
-            } else {
-                dbgs() << "Detected WR pair accessing the same memory address (allowed under TSO).\n";
-            }
-
-            return true;
-        } else {
-            // Instructions access different memory addresses
-            dbgs() << "Instructions access different memory addresses.\n";
-            return false;
-        }
-    } else {
-        dbgs() << "Instructions do not form a memory access pair.\n";
-        return false;
+    if (isFirstLoad) {
+        FirstMemOperand = cast<LoadInst>(First)->getPointerOperand();
+    } else if (isa<StoreInst>(First)) {
+        FirstMemOperand = cast<StoreInst>(First)->getPointerOperand();
     }
+
+    if (isSecondLoad) {
+        SecondMemOperand = cast<LoadInst>(Second)->getPointerOperand();
+    } else if (isa<StoreInst>(Second)) {
+        SecondMemOperand = cast<StoreInst>(Second)->getPointerOperand();
+    }
+
+    dbgs() << "\t Comparing memory addresses: \n";
+    dbgs() << "\t    FirstMemOperand = " << FirstMemOperand << "\n";
+    dbgs() << "\t    SecondMemOperand = " << SecondMemOperand  << "\n";
+
+    // Compare memory operands to check if they access the same memory address
+    if (FirstMemOperand == SecondMemOperand) {
+      dbgs() << "\t Detected access to the same memory address.\n";
+      if (isFirstLoad && isSecondStore) {
+          dbgs() << "\t Detected RW pair requiring a fence.\n";
+          return true;
+      } else if (!isFirstLoad && isSecondStore) {
+          dbgs() << "\t Detected WW pair requiring a fence.\n";
+          return true;
+      } else if (isFirstLoad && isSecondLoad) {
+          dbgs() << "\t Detected RR pair, usually not requiring a fence under TSO.\n";
+      } else {
+          dbgs() << "\t Detected WR pair, allowed under TSO without a fence.\n";
+      }
+    } else {
+      dbgs() << "\t No fence needed as instructions access different memory addresses.\n";
+    }
+  } else {
+    dbgs() << "\t Instructions do not form a memory access pair.\n";
+  }
+  return false;
 }
+
 
   
 
