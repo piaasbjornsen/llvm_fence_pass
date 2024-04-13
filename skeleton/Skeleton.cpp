@@ -85,7 +85,7 @@ public:
 
     return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
-
+  
 private:
   bool needsFence(Instruction *First, Instruction *Second) {
     // TSO allows WR without fences; fences are needed for RW, WW, and RR pairs
@@ -95,16 +95,17 @@ private:
 
     if (isFirstLoad && isSecondStore) {
       dbgs() << "Detected RW pair.\n";
-    } else if (!isFirstLoad && isSecondLoad) {
-      dbgs() << "Detected WW pair.\n";
     } else if (!isFirstLoad && isSecondStore) {
+      dbgs() << "Detected WW pair.\n";
+    } else if (isFirstLoad && isSecondLoad) {
       dbgs() << "Detected RR pair.\n";
     } else {
       dbgs() << "Detected WR pair (allowed under TSO).\n";
     }
 
-    return (isFirstLoad && isSecondStore) || (!isFirstLoad && (isSecondLoad || isSecondStore));
+    return (isFirstLoad && isSecondStore) || (!isFirstLoad && isSecondStore) || (isFirstLoad && isSecondLoad);
   }
+  
 
   void insertMemoryFence(Instruction *Inst, bool &modified) {
     IRBuilder<> Builder(Inst);
