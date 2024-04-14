@@ -1,41 +1,36 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <threads.h>
+#include <pthread.h>
 
-volatile int shared_data = 0; // Shared variable between threads
+int global_a = 0;
+int global_b = 0;
 
-int increment(void* arg) {
-    for (int i = 0; i < 1000000; i++) {
-        shared_data++; // Non-atomic increment
+void* thread_func(void* ptr) {
+    int* alias_ptr = (int*)ptr;
+
+    for (int i = 0; i < 100000; ++i) {
+        *alias_ptr += 1;  // Modify global variable through aliased pointer
+        global_b += 1;    // Direct modification of another global variable
     }
-    return 0;
-}
-
-int decrement(void* arg) {
-    for (int i = 0; i < 1000000; i++) {
-        shared_data--; // Non-atomic decrement
-    }
-    return 0;
+    return NULL;
 }
 
 int main() {
-    thrd_t thr1, thr2;
+    pthread_t thread1, thread2;
 
-    // Create two threads that modify shared_data concurrently
-    if (thrd_create(&thr1, increment, NULL) != thrd_success) {
-        fprintf(stderr, "Error creating thread\n");
+    // Both threads modify global_a and global_b, possibly at the same time
+    if (pthread_create(&thread1, NULL, thread_func, &global_a) != 0) {
+        perror("Failed to create thread1");
+        return 1;
+    }
+    if (pthread_create(&thread2, NULL, thread_func, &global_a) != 0) {
+        perror("Failed to create thread2");
         return 1;
     }
 
-    if (thrd_create(&thr2, decrement, NULL) != thrd_success) {
-        fprintf(stderr, "Error creating thread\n");
-        return 1;
-    }
+    pthread_join(thread1, NULL);
+    pthread_join(thread2, NULL);
 
-    // Wait for threads to finish
-    thrd_join(thr1, NULL);
-    thrd_join(thr2, NULL);
-
-    printf("Final value of shared_data: %d\n", shared_data);
+    printf("Final values: global_a = %d, global_b = %d\n", global_a, global_b);
     return 0;
 }
