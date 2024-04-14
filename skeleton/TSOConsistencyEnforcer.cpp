@@ -66,13 +66,16 @@ namespace {
                 dbgs() << "Function: " << F.getName() << "\n";
                 auto& AA = FAM.getResult<AAManager>(F);
                 for (BasicBlock& BB : F) {
+                    //check if initial instruction is store/load
                     for (Instruction& I : BB) {
-                        //compare all store-load pairs in the basic block
-                        for (Instruction& J : BB) {
-                            if (&I != &J && (isa<LoadInst>(&J) || isa<StoreInst>(&J))) {
-                                if (needsFence(&I, &J, AA)) {
-                                    MDG.addDependency(&I, &J);
-                                    dbgs() << "Dependency detected between: " << I << " and " << J << "\n";
+                        if (isa<LoadInst>(&I) || isa<StoreInst>(&I)) {
+                            //compare all pairs in the basic block
+                            for (Instruction& J : BB) {
+                                if (&I != &J && (isa<LoadInst>(&J) || isa<StoreInst>(&J))) {
+                                    if (needsFence(&I, &J, AA)) {
+                                        MDG.addDependency(&I, &J);
+                                        dbgs() << "Dependency detected between: " << I << " and " << J << "\n";
+                                    }
                                 }
                             }
                         }
