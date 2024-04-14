@@ -64,21 +64,35 @@ namespace {
 
             MemoryDependencyGraph MDG;
 
+            std::vector<Instruction*> globalAccesses;
+
             for (Function& F : M) {
                 if (F.isDeclaration()) continue;
                 dbgs() << "Function: " << F.getName() << "\n";
-
-                auto& AA = FAM.getResult<AAManager>(F);
                 for (BasicBlock& BB : F) {
-                    //check if initial instruction is store/load
+                    //vector with all instructions for current block
+                    std::vector<Instruction*> instructions;
                     for (Instruction& I : BB) {
-                        if (isa<LoadInst>(&I) || isa<StoreInst>(&I)) {
-                            //compare all pairs in the basic block
-                            for (Instruction& J : BB) {
-                                if (&I != &J && (isa<LoadInst>(&J) || isa<StoreInst>(&J))) {
-                                    if (needsFence(&I, &J, AA)) {
-                                        MDG.addDependency(&I, &J);
-                                        dbgs() << "Dependency detected between: " << I << " and " << J << "\n";
+                        instructions.push_back(&I);  // Convert reference to pointer
+                    }
+
+                    auto& AA = FAM.getResult<AAManager>(F);
+
+                    for (int i = 0; i < instructions.size(); i++) {
+                        Instruction* I = instructions[i];
+                        //check if instruction is a global access and add it to the list if it is
+                        if (isGlobalAccess(I)) {
+                            globalAccesses.push_back(I);
+                            dbgs() << "Global Access detected: " << *I << "\n";
+                        }
+                        if (isa<LoadInst>(I) || isa<StoreInst>(I)) {
+                            //only compare I with instructions J after it in the list
+                            for (int j = i + 1; j < instructions.size(); j++) {
+                                Instruction* J = instructions[j];
+                                if (isa<LoadInst>(J) || isa<StoreInst>(J)) {
+                                    if (needsFence(I, J, AA)) {
+                                        MDG.addDependency(I, J);
+                                        dbgs() << "Dependency detected between: " << *I << " and " << *J << "\n";
                                     }
                                 }
                             }
@@ -86,6 +100,18 @@ namespace {
                     }
                 }
                 dbgs() << "End of function: " << F.getName() << "\n";
+            }
+            //GLOBAL ACCESSES check
+            for (int i = 0; i < globalAccesses.size(); i++) {
+                Instruction* I = globalAccesses[i];
+                for (int j = i + 1; j < globalAccesses.size(); j++) {
+					Instruction* J = globalAccesses[j];
+                    //find dependencies between cross-function global accesses
+                    if (needsFence(I, J, FAM.getResult<AAManager>(*I->getFunction()))) {
+						MDG.addDependency(I, J);
+						dbgs() << "Global Access dependency detected between: " << *I << " and " << *J << "\n";
+					}
+				}
             }
 
             for (auto& Edge : MDG.getAllEdges()) {
@@ -108,6 +134,7 @@ namespace {
         }
 
     private:
+        //check if two instructions need a fence to prevent reordering
         bool needsFence(Instruction* First, Instruction* Second, AAResults& AA) {
             Optional<MemoryLocation> FirstLoc = MemoryLocation::getOrNone(First);
             Optional<MemoryLocation> SecondLoc = MemoryLocation::getOrNone(Second);
@@ -134,6 +161,19 @@ namespace {
             auto* Fence = Builder.CreateFence(AtomicOrdering::SequentiallyConsistent, SyncScope::System);
             modified = true;
             dbgs() << "Memory fence inserted: " << *Fence << "\n";
+        }
+
+        //check if instruction is a global access to find inter-function aliasing
+        bool isGlobalAccess(Instruction* Inst) {
+            if (isa<LoadInst>(Inst)) {
+                LoadInst* loadInst = cast<LoadInst>(Inst);
+                return isa<GlobalVariable>(loadInst->getPointerOperand());
+            }
+            else if (isa<StoreInst>(Inst)) {
+                StoreInst* storeInst = cast<StoreInst>(Inst);
+                return isa<GlobalVariable>(storeInst->getPointerOperand());
+            }
+            return false;
         }
     };
 
