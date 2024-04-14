@@ -8,16 +8,58 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/ADT/GraphTraits.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace llvm;
 
 namespace {
+    struct Edge {
+        Instruction* first;
+        Instruction* second;
+    };
+
+    class MemoryDependencyGraph {
+    public:
+        //tree of dependency edges
+        std::vector<Edge> edges;
+        //use setvector to store instructions and avoid duplicates
+        using InstSet = SetVector<Instruction*>;
+        //graph is a map from an Instruction* to a set of Instruction*
+        DenseMap<Instruction*, InstSet> graph;  
+
+        //adds dependency as edge between two input instructions
+        void addDependency(Instruction* first, Instruction* second) {
+            graph[first].insert(second);
+        }
+
+        //return a vector with all edges in the graph
+        std::vector<Edge> getAllEdges() {
+            edges.clear();  //clear existing vector and construct a new one from the graph
+            for (auto& pair : graph) {
+                Instruction* first = pair.first;
+                InstSet& seconds = pair.second;
+                for (Instruction* second : seconds) {
+                    edges.push_back({ first, second }); //add edge to list of edges
+                }
+            }
+            return edges;
+        }
+
+        //checks if there is a dependency between two instructions
+        bool hasDependency(Instruction* first, Instruction* second) {
+            return graph[first].count(second) > 0;
+        }
+    };
 
     class TSOConsistencyEnforcer : public PassInfoMixin<TSOConsistencyEnforcer> {
     public:
         PreservedAnalyses run(Module& M, ModuleAnalysisManager& AM) {
             bool modified = false;
             auto& FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+
+            MemoryDependencyGraph MDG;
 
             for (Function& F : M) {
                 if (F.isDeclaration()) continue;
@@ -29,12 +71,23 @@ namespace {
                         for (Instruction& J : BB) {
                             if (&I != &J && (isa<LoadInst>(&J) || isa<StoreInst>(&J))) {
                                 if (needsFence(&I, &J, AA)) {
-                                    insertMemoryFence(&J, modified);
+                                    MDG.addDependency(&I, &J);
+                                    dbgs() << "Dependency detected between: " << I << " and " << J << "\n";
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            for (auto& Edge : MDG.getAllEdges()) {
+                //check if edge is a dependency and if it needs a fence
+                if (needsFence(Edge.first, Edge.second, FAM.getResult<AAManager>(*Edge.first->getFunction())) 
+                    && MDG.hasDependency(Edge.first, Edge.second)) {
+                    //remove dependency and insert fence
+                    dbgs() << "Inserting fence between: " << *Edge.first << " and " << *Edge.second << "\n";
+					insertMemoryFence(Edge.second, modified);
+				}
             }
 
             if (modified) {
@@ -61,7 +114,6 @@ namespace {
                     bool isStoreSecond = isa<StoreInst>(Second);
                     //check if instructions are not WR pair
                     if ((isLoadFirst && isStoreSecond) || (isStoreFirst && isStoreSecond) || (isLoadFirst && isLoadSecond)) {
-                        dbgs() << "Inserting fence between: " << *First << " and " << *Second << "\n";
 						return true;
 					}                
                 }
