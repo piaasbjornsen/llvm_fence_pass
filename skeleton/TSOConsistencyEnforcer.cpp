@@ -31,7 +31,10 @@ namespace {
 
         //adds dependency as edge between two input instructions
         void addDependency(Instruction* first, Instruction* second) {
-            graph[first].insert(second);
+            //check if 'second->first' already exists to prevent extra fences
+            if (!graph[second].count(first) && !graph[first].count(second)) {
+                graph[first].insert(second);
+            }
         }
 
         //return a vector with all edges in the graph
@@ -64,6 +67,7 @@ namespace {
             for (Function& F : M) {
                 if (F.isDeclaration()) continue;
                 dbgs() << "Function: " << F.getName() << "\n";
+
                 auto& AA = FAM.getResult<AAManager>(F);
                 for (BasicBlock& BB : F) {
                     //check if initial instruction is store/load
@@ -81,6 +85,7 @@ namespace {
                         }
                     }
                 }
+                dbgs() << "End of function: " << F.getName() << "\n";
             }
 
             for (auto& Edge : MDG.getAllEdges()) {
