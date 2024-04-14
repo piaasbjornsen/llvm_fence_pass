@@ -136,8 +136,8 @@ namespace {
     private:
         //check if two instructions need a fence to prevent reordering
         bool needsFence(Instruction* First, Instruction* Second, AAResults& AA) {
-            Optional<MemoryLocation> FirstLoc = MemoryLocation::getOrNone(First);
-            Optional<MemoryLocation> SecondLoc = MemoryLocation::getOrNone(Second);
+            std::optional<MemoryLocation> FirstLoc = MemoryLocation::getOrNone(First);
+            std::optional<MemoryLocation> SecondLoc = MemoryLocation::getOrNone(Second);
             //dbgs() << "Comparing instructions: " << *First << " and " << *Second << "\n";
 
             if (FirstLoc && SecondLoc) {
