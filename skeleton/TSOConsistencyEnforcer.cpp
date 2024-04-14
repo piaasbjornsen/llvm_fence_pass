@@ -43,16 +43,15 @@ namespace {
                         }
                     }
                 }
-
-                if (modified) {
-                    dbgs() << "Modifications made to module: Fences inserted.\n";
-                }
-                else {
-                    dbgs() << "No modifications made to module: No fences inserted.\n";
-                }
-
-                return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
             }
+            if (modified) {
+                dbgs() << "Modifications made to module: Fences inserted.\n";
+            }
+            else {
+                dbgs() << "No modifications made to module: No fences inserted.\n";
+            }
+
+            return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
         }
 
     private:
